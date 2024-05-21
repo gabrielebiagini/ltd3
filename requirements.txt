@@ -1,1 +1,14 @@
-
+streamlit
+openai
+numpy
+pandas
+scikit_learn
+tensorflow==2.13.0
+tensorflow_hub
+keras
+opencv-python-headless
+pillow
+pathlib
+matplotlib
+python-resize-image
+gdown
