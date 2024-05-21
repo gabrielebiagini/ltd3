@@ -3,10 +3,31 @@ import numpy as np
 from PIL import Image
 import cv2
 import streamlit as st
+import requests
+import os
 
-# Caricamento del modello
-model = tf.keras.models.load_model('C:/Users/gabri/Downloads/fungi_classifier_model (1).h5')
+# Funzione per scaricare e caricare il modello
+def load_model():
+    model_url = 'https://www.dropbox.com/scl/fi/437k0jr5hvzzyfyrp50z2/fungi_classifier_model.h5?rlkey=2tar5m1btexq24y6cf2inosnf&st=htf7dkfc&dl=0?dl=1'  # Sostituisci YOUR_FILE_ID con l'ID del tuo file
+    model_path = 'fungi_classifier_model.h5'
+    
+    if not os.path.isfile(model_path):
+        st.write(f"Modello non trovato, scaricando da {model_url}...")
+        response = requests.get(model_url, stream=True)
+        with open(model_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        st.write("Download completato.")
+    
+    return tf.keras.models.load_model(model_path)
 
+# Carica il modello
+try:
+    model = load_model()
+    st.write("Modello caricato correttamente.")
+except Exception as e:
+    st.write(f"Errore nel caricamento del modello: {e}")
 # Caricamento dell'ordine delle classi
 with open('C:/Users/gabri/Downloads/class_labels.txt', 'r') as f:
     species_list = [line.strip() for line in f]
