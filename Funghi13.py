@@ -29,7 +29,7 @@ try:
 except Exception as e:
     st.write(f"Errore nel caricamento del modello: {e}")
 # Caricamento dell'ordine delle classi
-with open('C:/Users/gabri/Downloads/class_labels.txt', 'r') as f:
+with open('class_labels.txt', 'r') as f:
     species_list = [line.strip() for line in f]
 
 # Dizionario con le informazioni sui funghi
