@@ -710,8 +710,10 @@ if st.session_state.demographic_collected:
                 st.info(f"💡 Perfetto! Prova con un'altra immagine (#{st.session_state.current_image_number}) per completare lo studio.")
             else:
                 st.success("🎉 Hai completato lo studio! I tuoi dati sono stati salvati per l'analisi.")
+else:
+    st.info("👆 Completa prima le informazioni demografiche nella sidebar per iniziare lo studio.")
 
-# Sidebar per download dati
+# Sidebar per download dati (sempre disponibile)
 if st.sidebar.button("📥 Scarica dati studio", key="download"):
     if st.session_state.user_data:
         df = pd.DataFrame(st.session_state.user_data)
@@ -738,7 +740,3 @@ with st.sidebar.expander("ℹ️ Informazioni Studio"):
     
     **Dati raccolti:** Anonimi e utilizzati solo per ricerca accademica.
     """)
-
-else:
-    st.info("👆 Completa prima le informazioni demografiche nella sidebar per iniziare lo studio.")
-
