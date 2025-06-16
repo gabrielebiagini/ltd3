@@ -8,7 +8,7 @@ import os
 import io
 from lime import lime_image
 from skimage.segmentation import mark_boundaries
-from serpapi import GoogleSearch # <-- NUOVA IMPORTAZIONE
+from serpapi import SerpApiClient # <-- MODIFICATO: Importiamo la classe corretta
 
 # --- CONFIGURAZIONE DELLA PAGINA STREAMLIT ---
 st.set_page_config(
@@ -45,7 +45,6 @@ FUNGI_INFO = {
 
 # --- FUNZIONI (incluso il caricamento del modello e le funzioni XAI esistenti) ---
 # ... (Tutte le funzioni da load_model a make_occlusion_sensitivity_map rimangono invariate) ...
-
 @st.cache_resource
 def load_model():
     model_url = 'https://www.dropbox.com/scl/fi/437k0jr5hvzzyfyrp50z2/fungi_classifier_model.h5?rlkey=2tar5m1btexq24y6cf2inosnf&dl=1'
@@ -138,7 +137,7 @@ def make_occlusion_sensitivity_map(_model, original_image_resized, patch_size=16
     heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap) + 1e-9)
     return heatmap
 
-# --- NUOVA FUNZIONE PER CERCARE IMMAGINI ONLINE ---
+# --- FUNZIONE PER CERCARE IMMAGINI ONLINE (CORRETTA) ---
 @st.cache_data
 def fetch_online_images(query: str, num_images: int = 4):
     """Cerca immagini online usando SerpApi e restituisce gli URL."""
@@ -154,8 +153,8 @@ def fetch_online_images(query: str, num_images: int = 4):
     }
     
     try:
-        search = GoogleSearch(params)
-        results = search.get_dict()
+        client = SerpApiClient(params) # <-- MODIFICATO: Usiamo la nuova classe
+        results = client.get_dict()
         image_results = [item['original'] for item in results.get('images_results', [])[:num_images]]
         return image_results
     except Exception as e:
@@ -172,7 +171,7 @@ def save_experiment_data(data):
     with open(file_path, 'a') as f: f.write(f"{data['student_id']},{data['filename']},{data['ai_species']},{data['ai_edibility']},{data['student_decision']},{data['student_trust']},{data['explanation_mode']}\n")
 
 
-# --- INTERFACCIA UTENTE STREAMLIT (con la nuova scheda) ---
+# --- INTERFACCIA UTENTE STREAMLIT (invariata) ---
 st.title("🍄 Analisi Funghi con AI Spiegabile (XAI)")
 
 model = load_model()
@@ -233,8 +232,7 @@ if uploaded_file is not None:
                     st.image(online_images, width=150, caption=[f"Esempio #{i+1}" for i in range(len(online_images))])
                     st.info("""
                     **Come leggere questa scheda?** Queste immagini **non provengono dal modello**, ma da una ricerca su Google. 
-                    Usale come un riferimento esterno per confrontare l'immagine originale con esempi "canonici" della specie predetta. 
-                    Ti aiuta a rispondere alla domanda: "La previsione dell'AI ha un nome che corrisponde a funghi di questo aspetto?"
+                    Usale come un riferimento esterno per confrontare l'immagine originale con esempi "canonici" della specie predetta.
                     """, icon="💡")
                 elif isinstance(online_images, str):
                     st.error(online_images) # Mostra il messaggio di errore
