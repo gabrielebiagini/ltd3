@@ -16,4 +16,4 @@ requests
 lime
 seaborn
 serpapi 
-GoogleSearch
+serpapi client
