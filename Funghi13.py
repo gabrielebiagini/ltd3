@@ -1,227 +1,251 @@
-"""
-Streamlit app: Fungi Classifier + Multi‑XAI Dashboard
-----------------------------------------------------
-* Classifies 48 mushroom species (ResNet50 backbone stored on Dropbox)
-* Explanation methods selectable in sidebar:
-  – Grad‑CAM (baseline)
-  – Grad‑CAM++
-  – Integrated Gradients
-  – Occlusion Sensitivity
-* Extra XAI text
-* UX extras: TOP‑k bar‑chart, full confidence table, heat‑map alpha slider, species facts, safety banner, logging CSV
-* Professor‑mode flags: simulate misclassification, switch backbone (future)
-
-Install missing packages:
-    pip install streamlit tensorflow tf-keras-vis pillow numpy opencv-python
-"""
-
-from __future__ import annotations
-import csv
-import datetime as _dt
-import os
-import pathlib
-import requests
-
-import cv2
-import numpy as np
-import tensorflow as tf
-from PIL import Image
 import streamlit as st
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+import cv2
+import requests
+import os
+import io
+from lime import lime_image
+from skimage.segmentation import mark_boundaries
 
-# ──────────────────────────────── PAGE CONFIG (must be first st.* call)
-st.set_page_config(page_title="Fungi Classifier XAI", page_icon="🍄", layout="centered")
-
-# Optional XAI libs (Grad‑CAM++, Integrated Gradients)
-try:
-    from tf_keras_vis.gradcam import Gradcam
-    from tf_keras_vis.gradcam_plus_plus import GradcamPlusPlus
-    from tf_keras_vis.integrated_gradients import IntegratedGradients
-    from tf_keras_vis.utils.scores import CategoricalScore
-    _XAI_OK = True
-except ModuleNotFoundError:
-    _XAI_OK = False
-
-########################################################################
-# 1. DATA & MODELS #####################################################
-########################################################################
-_MODEL_URL = (
-    "https://www.dropbox.com/scl/fi/437k0jr5hvzzyfyrp50z2/"
-    "fungi_classifier_model.h5?rlkey=2tar5m1btexq24y6cf2inosnf&dl=1"
+# --- CONFIGURAZIONE DELLA PAGINA STREAMLIT ---
+st.set_page_config(
+    page_title="Analisi Funghi con XAI",
+    page_icon="🍄",
+    layout="wide"
 )
-_MODEL_PATH = "fungi_classifier_model.h5"
-_LABEL_PATH = "class_labels.txt"
-_LOG_PATH = "predictions_log.csv"
 
-@st.cache_resource(show_spinner=True, ttl=60 * 60 * 24)
-def load_model() -> tf.keras.Model:  # noqa: N802
-    """Download (if necessary) and cache Keras model."""
-    if not os.path.isfile(_MODEL_PATH):
-        with st.spinner("📥 Scaricamento modello (~80 MB)…"):
-            r = requests.get(_MODEL_URL, stream=True, timeout=60)
-            r.raise_for_status()
-            with open(_MODEL_PATH, "wb") as f:
-                for chunk in r.iter_content(8192):
-                    f.write(chunk)
-    return tf.keras.models.load_model(_MODEL_PATH, compile=False)
-
-@st.cache_resource
-def load_labels() -> list[str]:
-    with open(_LABEL_PATH, encoding="utf-8") as f:
-        return [ln.strip() for ln in f]
-
-model = load_model()
-SPECIES = load_labels()
-NUM_CLASSES = len(SPECIES)
-
-# ── Extra metadata: Italian name & edibility ─────────────────────────
-FUNGI_INFO: dict[str, dict[str, str]] = {
-    "Agaricus bisporus": {"it": "Prataiolo coltivato", "edible": "Commestibile"},
-    "Agaricus subrufescens": {"it": "Prataiolo mandorlato", "edible": "Commestibile"},
-    "Amanita bisporigera": {"it": "Amanita bisporigera", "edible": "Velenoso"},
-    "Amanita muscaria": {"it": "Amanita muscaria", "edible": "Velenoso"},
-    "Amanita ocreata": {"it": "Amanita ocreata", "edible": "Velenoso"},
-    "Amanita phalloides": {"it": "Amanita falloide", "edible": "Mortale"},
-    "Amanita smithiana": {"it": "Amanita smithiana", "edible": "Velenoso"},
-    "Amanita verna": {"it": "Amanita verna", "edible": "Mortale"},
-    "Amanita virosa": {"it": "Amanita virosa", "edible": "Mortale"},
-    "Auricularia auricula-judae": {"it": "Orecchio di Giuda", "edible": "Commestibile"},
-    "Boletus edulis": {"it": "Porcino", "edible": "Commestibile"},
-    # … (truncated for brevity – include all 48 entries as in original)
-}
-
-########################################################################
-# 2. PRE/POST‑PROCESSING ###############################################
-########################################################################
-
-def preprocess(img: Image.Image) -> np.ndarray:
-    """Resize→norm→shape (1,128,128,3)."""
-    arr = cv2.resize(np.array(img.convert("RGB")), (128, 128)) / 255.0
-    return arr[np.newaxis, ...].astype("float32")
-
-
-def predict(img_arr: np.ndarray) -> tuple[str, float, np.ndarray]:
-    preds = model.predict(img_arr, verbose=0)[0]
-    idx = int(np.argmax(preds))
-    return SPECIES[idx], float(preds[idx]), preds
-
-########################################################################
-# 3. XAI UTILITIES #####################################################
-########################################################################
-
-def _norm(hm: np.ndarray) -> np.ndarray:
-    hm = np.maximum(hm, 0)
-    hm = hm / hm.max() if hm.max() else hm
-    return cv2.resize(hm, (128, 128))
-
-
-def gradcam_hm(arr: np.ndarray, idx: int) -> np.ndarray:
-    if not _XAI_OK:
-        st.error("Installa tf‑keras‑vis per Grad‑CAM")
-        return np.zeros((128, 128))
-    score = CategoricalScore([idx])
-    cam = Gradcam(model)
-    return _norm(cam(score, arr)[0])
-
-
-def gradcampp_hm(arr: np.ndarray, idx: int) -> np.ndarray:
-    if not _XAI_OK:
-        st.error("Grad‑CAM++ richiede tf‑keras‑vis")
-        return np.zeros((128, 128))
-    score = CategoricalScore([idx])
-    campp = GradcamPlusPlus(model)
-    return _norm(campp(score, arr)[0])
-
-
-def integgrads_hm(arr: np.ndarray, idx: int) -> np.ndarray:
-    if not _XAI_OK:
-        st.error("Integrated Gradients richiede tf‑keras‑vis")
-        return np.zeros((128, 128))
-    score = CategoricalScore([idx])
-    ig = IntegratedGradients(model)
-    attr = ig(score, arr, steps=24)[0].mean(-1)
-    return _norm(attr)
-
-
-def occlusion_hm(img: Image.Image, patch: int, stride: int, idx: int) -> np.ndarray:
-    base = cv2.resize(np.array(img.convert("RGB")), (128, 128))
-    h, w, _ = base.shape
-    base_prob = model.predict(base[np.newaxis] / 255.0, verbose=0)[0][idx]
-    heat = np.zeros((h, w), dtype="float32")
-    for y in range(0, h, stride):
-        for x in range(0, w, stride):
-            occl = base.copy()
-            occl[y:y + patch, x:x + patch] = 0
-            p = model.predict(occl[np.newaxis] / 255.0, verbose=0)[0][idx]
-            heat[y:y + patch, x:x + patch] = base_prob - p
-    return _norm(heat)
-
-
-def overlay(img: Image.Image, hm: np.ndarray, alpha: float) -> np.ndarray:
-    rgb = cv2.resize(np.array(img.convert("RGB")), (128, 128))
-    cmap = cv2.applyColorMap(np.uint8(hm * 255), cv2.COLORMAP_JET)
-    return cv2.addWeighted(cmap, alpha, rgb, 1 - alpha, 0)
-
-########################################################################
-# 4. UI ###############################################################
-########################################################################
-
-st.title("🍄 Classificatore di Funghi con Explainability")
-st.info("⚠️ **Non consumare funghi basandoti solo su questo modello** — può sbagliare!")
-
-with st.sidebar:
-    st.header("🔧 Parametri")
-    method = st.selectbox(
-        "Metodo di spiegazione",
-        ["Grad‑CAM", "Grad‑CAM++", "Integrated Gradients", "Occlusion Sensitivity"],
-    )
-    alpha = st.slider("Trasparenza heat‑map", 0.1, 0.8, 0.4, 0.05)
-    if method == "Occlusion Sensitivity":
-        patch = st.slider("Dimensione patch", 4, 32, 16, 2)
-        stride = st.slider("Stride", 4, 32, 8, 2)
-    else:
-        patch = stride = None
-    topk = st.slider("Mostra TOP‑k specie", 3, 15, 5)
-    show_all_conf = st.checkbox("Mostra tabella confidenze")
-    simulate_err = st.checkbox("Simula misclassificazione (20 %)")
-
-uploaded = st.file_uploader("Carica foto del fungo", ["jpg", "jpeg", "png"])
-if not uploaded:
-    st.caption("⬆️ Carica un'immagine per iniziare…")
+# --- DIZIONARIO DATI E LISTA CLASSI ---
+# Caricamento dell'ordine delle classi in modo robusto
+try:
+    with open('class_labels.txt', 'r') as f:
+        SPECIES_LIST = [line.strip() for line in f]
+except FileNotFoundError:
+    st.error("Errore critico: il file 'class_labels.txt' non è stato trovato. Assicurarsi che sia nella stessa cartella dell'app.")
     st.stop()
 
-img = Image.open(uploaded)
-st.image(img, caption="📷 Immagine caricata", use_column_width=True)
-arr = preprocess(img)
-label, conf, preds = predict(arr)
-if simulate_err and np.random.rand() < 0.2:
-    alt_idx = int(np.argsort(preds)[-2])
-    label, conf = SPECIES[alt_idx], float(preds[alt_idx])
+# Incolli qui il suo dizionario completo. Per brevità, è ridotto.
+FUNGI_INFO = {
+    "Agaricus bisporus": {"nome_italiano": "Prataiolo coltivato", "commestibile": "Commestibile"},
+    "Amanita phalloides": {"nome_italiano": "Amanita falloide", "commestibile": "Mortale"},
+    "Boletus edulis": {"nome_italiano": "Porcino", "commestibile": "Commestibile"},
+    "Agaricus subrufescens": {"nome_italiano": "Prataiolo mandorlato", "commestibile": "Commestibile"},
+    "Amanita bisporigera": {"nome_italiano": "Amanita bisporigera", "commestibile": "Velenoso"},
+    "Amanita muscaria": {"nome_italiano": "Amanita muscaria", "commestibile": "Velenoso"},
+    "Amanita ocreata": {"nome_italiano": "Amanita ocreata", "commestibile": "Velenoso"},
+    "Amanita smithiana": {"nome_italiano": "Amanita smithiana", "commestibile": "Velenoso"},
+    "Amanita verna": {"nome_italiano": "Amanita verna", "commestibile": "Mortale"},
+    "Amanita virosa": {"nome_italiano": "Amanita virosa", "commestibile": "Mortale"},
+    "Cantharellus cibarius": {"nome_italiano": "Gallinaccio", "commestibile": "Commestibile"},
+    "Galerina marginata": {"nome_italiano": "Galerina marginata", "commestibile": "Mortale"},
+    "Lepiota brunneoincarnata": {"nome_italiano": "Lepiota brunneoincarnata", "commestibile": "Mortale"}
+}
 
-info = FUNGI_INFO.get(label, {"it": "—", "edible": "—"})
 
-st.subheader("🔎 Risultato")
-st.markdown(f"**Specie predetta:** `{label}`  ")
-st.markdown(f"**Nome italiano:** {info['it']}  ")
-st.markdown(f"**Commestibilità:** {info['edible']}  ")
-st.markdown(f"**Confidenza:** `{conf*100:.1f}%`")
+# --- FUNZIONI DI UTILITY E CARICAMENTO MODELLO (CON CACHING) ---
 
-# TOP‑k bar chart
-idx_sorted = np.argsort(preds)[::-1][:topk]
-st.bar_chart({SPECIES[i]: float(preds[i]) for i in idx_sorted})
+@st.cache_resource
+def load_model():
+    model_url = 'https://www.dropbox.com/scl/fi/437k0jr5hvzzyfyrp50z2/fungi_classifier_model.h5?rlkey=2tar5m1btexq24y6cf2inosnf&dl=1'
+    model_path = 'fungi_classifier_model.h5'
+    if not os.path.isfile(model_path):
+        st.write(f"Modello non trovato, scaricando da URL...")
+        try:
+            response = requests.get(model_url, stream=True)
+            response.raise_for_status()
+            with open(model_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            st.success("Download completato.")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Errore durante il download del modello: {e}")
+            return None
+    try:
+        model = tf.keras.models.load_model(model_path)
+        st.success("Modello caricato correttamente.")
+        return model
+    except Exception as e:
+        st.error(f"Errore nel caricamento del file del modello: {e}")
+        return None
 
-# Full confidences
-if show_all_conf:
-    st.expander("Tabella confidenze per tutte le classi", expanded=False).dataframe(
-        {"Specie": SPECIES, "Probabilità": preds}, use_container_width=True
-    )
+def preprocess_image(image: Image.Image):
+    image = image.convert('RGB')
+    img_array = np.array(image, dtype=np.uint8)
+    img_array = cv2.resize(img_array, (128, 128))
+    img_array_scaled = img_array / 255.0
+    return np.expand_dims(img_array_scaled, axis=0), img_array
 
-# Heat‑map
-pred_idx = int(np.argmax(preds))
-if method == "Grad‑CAM":
-    hm = gradcam_hm(arr, pred_idx)
-elif method == "Grad‑CAM++":
-    hm = gradcampp_hm(arr, pred_idx)
-elif method == "Integrated Gradients":
-    hm = integgrads_hm(arr, pred_idx)
-else:
-    hm = occlusion_hm(img, patch or
+def predict_fungus(model, image_array):
+    predictions = model.predict(image_array)[0]
+    predicted_index = np.argmax(predictions)
+    predicted_species = SPECIES_LIST[predicted_index]
+    confidence = predictions[predicted_index] * 100
+    info = FUNGI_INFO.get(predicted_species, {"nome_italiano": "N/A", "commestibile": "Sconosciuta"})
+    return predicted_species, info, confidence, predictions * 100
+
+# --- FUNZIONI DI EXPLAINABLE AI (XAI) ---
+
+def find_last_conv_layer_name(model):
+    for layer in reversed(model.layers):
+        if len(layer.output_shape) == 4 and isinstance(layer, tf.keras.layers.Conv2D):
+            return layer.name
+    return None
+
+def display_superimposed_heatmap(original_image, heatmap, alpha=0.5):
+    heatmap_resized = cv2.resize(heatmap, (original_image.shape[1], original_image.shape[0]))
+    heatmap_uint8 = np.uint8(255 * heatmap_resized)
+    heatmap_color = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
+    superimposed_img = cv2.addWeighted(heatmap_color, alpha, original_image, 1 - alpha, 0)
+    return superimposed_img
+
+@st.cache_data
+def make_gradcam_heatmap(_model, img_array, last_conv_layer_name):
+    grad_model = tf.keras.models.Model([_model.inputs], [_model.get_layer(last_conv_layer_name).output, _model.output])
+    with tf.GradientTape() as tape:
+        last_conv_layer_output, preds = grad_model(img_array)
+        top_pred_index = tf.argmax(preds[0])
+        top_class_channel = preds[:, top_pred_index]
+    grads = tape.gradient(top_class_channel, last_conv_layer_output)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    last_conv_layer_output = last_conv_layer_output[0]
+    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    return heatmap.numpy()
+
+@st.cache_data
+def explain_with_lime(_model, preprocessed_image_array):
+    explainer = lime_image.LimeImageExplainer()
+    prediction_fn = lambda x: _model.predict(x)
+    explanation = explainer.explain_instance(preprocessed_image_array[0], prediction_fn, top_labels=1, hide_color=0, num_samples=1000)
+    temp, mask = explanation.get_image_and_mask(explanation.top_labels[0], positive_only=True, num_features=5, hide_rest=False)
+    lime_img = mark_boundaries(temp / 2 + 0.5, mask)
+    return lime_img
+
+@st.cache_data
+def make_occlusion_sensitivity_map(_model, original_image_resized, patch_size=16):
+    """Calcola la mappa di sensibilità all'occlusione. REINTEGRATA E OTTIMIZZATA."""
+    original_pred = _model.predict(np.expand_dims(original_image_resized / 255.0, axis=0))[0]
+    original_pred_class_prob = np.max(original_pred)
+    
+    heatmap = np.zeros((original_image_resized.shape[0], original_image_resized.shape[1]), dtype=np.float32)
+    
+    for h in range(0, original_image_resized.shape[0], patch_size):
+        for w in range(0, original_image_resized.shape[1], patch_size):
+            occluded_image = original_image_resized.copy()
+            occluded_image[h:h+patch_size, w:w+patch_size, :] = 0 # Occlude l'area
+            
+            occluded_array = np.expand_dims(occluded_image / 255.0, axis=0)
+            pred = _model.predict(occluded_array)[0]
+            # La mappa di calore mostra di quanto scende la probabilità
+            heatmap[h:h+patch_size, w:w+patch_size] = original_pred_class_prob - pred[np.argmax(original_pred)]
+            
+    heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) - np.min(heatmap) + 1e-9)
+    return heatmap
+
+# --- FUNZIONI PER L'ATTIVITÀ ACCADEMICA ---
+def save_experiment_data(data):
+    file_path = 'experiment_results.csv'
+    header = "ID_Studente,Nome_File,Specie_AI,Commestibilita_AI,Decisione_Studente,Fiducia_Studente (1-5),Modalita_Spiegazione\n"
+    if not os.path.exists(file_path):
+        with open(file_path, 'w') as f: f.write(header)
+    with open(file_path, 'a') as f: f.write(f"{data['student_id']},{data['filename']},{data['ai_species']},{data['ai_edibility']},{data['student_decision']},{data['student_trust']},{data['explanation_mode']}\n")
+
+# --- INTERFACCIA UTENTE STREAMLIT ---
+st.title("🍄 Analisi Funghi con AI Spiegabile (XAI)")
+
+model = load_model()
+if model is None: st.stop()
+
+st.sidebar.header("Impostazioni")
+uploaded_file = st.sidebar.file_uploader("1. Carica un'immagine di un fungo...", type=["jpg", "jpeg", "png"])
+is_experiment_mode = st.sidebar.checkbox("Attiva Modalità Esperimento")
+student_id = st.sidebar.text_input("ID Studente", "studente_01") if is_experiment_mode else "default"
+explanation_mode = st.sidebar.radio("Modalità di Spiegazione", ("Completa (XAI)", "Nessuna (Black Box)")) if is_experiment_mode else "Completa (XAI)"
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    preprocessed_array, original_resized_array = preprocess_image(image)
+    predicted_species, info, confidence, all_confidences = predict_fungus(model, preprocessed_array)
+
+    if is_experiment_mode and uploaded_file.name == "amanita_test_01.jpg":
+        st.warning("⚠️ **ATTENZIONE: MODALITÀ ESPERIMENTO ATTIVA**", icon="🔬")
+        predicted_species = "Boletus edulis"
+        info = FUNGI_INFO.get(predicted_species, {})
+        confidence = 88.42
+
+    st.header("Risultati dell'Analisi AI")
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.image(image, caption=f"Immagine Caricata: {uploaded_file.name}", use_column_width=True)
+    with col2:
+        st.subheader(f"Predizione: **{predicted_species}**")
+        st.write(f"Nome Italiano: **{info.get('nome_italiano', 'N/A')}**")
+        st.write(f"Confidenza AI: **{confidence:.2f}%**")
+        commestibilita = info.get('commestibile', 'Sconosciuta')
+        if commestibilita == "Commestibile": st.success(f"**Commestibilità: {commestibilita}** ✅", icon="✅")
+        elif commestibilita == "Velenoso": st.warning(f"**Commestibilità: {commestibilita}** ⚠️", icon="⚠️")
+        elif commestibilita == "Mortale": st.error(f"**Commestibilità: {commestibilita}** ☠️", icon="☠️")
+        else: st.info(f"**Commestibilità: {commestibilita}** ❔", icon="❔")
+
+    # --- LISTA COMPLETA DELLE CLASSI DI APPARTENENZA (REINTEGRATA) ---
+    with st.expander("Mostra tutte le probabilità di classificazione (Classi di Appartenenza)"):
+        conf_dict = {SPECIES_LIST[i]: f"{all_confidences[i]:.2f}%" for i in range(len(SPECIES_LIST))}
+        st.json(conf_dict)
+        st.markdown("""
+        **Come leggere questa lista?** Questa è la "mente" del modello. Mostra quanto il modello sia sicuro per ogni singola specie che conosce. 
+        Una confidenza alta sulla specie predetta e bassa su tutte le altre indica che il modello è molto sicuro. 
+        Se due o più specie hanno valori simili, il modello è incerto.
+        """)
+    st.divider()
+
+    if explanation_mode == "Completa (XAI)":
+        st.header("🤖 Spiegazione della Decisione (XAI)")
+        
+        # --- USO DELLE SCHEDE (TABS) PER ORGANIZZARE LE SPIEGAZIONI ---
+        tab1, tab2, tab3 = st.tabs(["🔥 Grad-CAM", "🧩 LIME", "⬛ Occlusion Sensitivity"])
+
+        with tab1:
+            with st.spinner("Generazione Grad-CAM..."):
+                last_conv_layer = find_last_conv_layer_name(model)
+                if last_conv_layer:
+                    gradcam_heatmap = make_gradcam_heatmap(model, preprocessed_array, last_conv_layer)
+                    gradcam_superimposed = display_superimposed_heatmap(original_resized_array, gradcam_heatmap)
+                    st.image(gradcam_superimposed, caption="Heatmap Grad-CAM", use_column_width=True)
+                    st.markdown(f"**Cosa significa?** Le aree **rosse** indicano le parti dell'immagine che l'AI ha ritenuto più importanti per classificarlo come *{predicted_species}*.")
+                else:
+                    st.error("Impossibile generare Grad-CAM: nessun layer convoluzionale trovato.")
+        
+        with tab2:
+            with st.spinner("Generazione LIME..."):
+                lime_img = explain_with_lime(model, preprocessed_array)
+                st.image(lime_img, caption="Spiegazione LIME", use_column_width=True)
+                st.markdown(f"**Cosa significa?** LIME evidenzia i **gruppi di pixel** che hanno contribuito maggiormente alla previsione *{predicted_species}*.")
+        
+        with tab3:
+            with st.spinner("Generazione Occlusion Sensitivity... (può essere lento la prima volta)"):
+                occlusion_map = make_occlusion_sensitivity_map(model, original_resized_array)
+                occlusion_superimposed = display_superimposed_heatmap(original_resized_array, occlusion_map, alpha=0.6)
+                st.image(occlusion_superimposed, caption="Mappa di Occlusion Sensitivity", use_column_width=True)
+                st.markdown("""
+                **Cosa significa?** Le aree **rosse** indicano le regioni dell'immagine che, se coperte, **causano il maggior calo di fiducia** nella predizione. 
+                In altre parole, sono le aree a cui il modello non può "rinunciare" per fare la sua scelta.
+                """)
+
+    elif explanation_mode == "Nessuna (Black Box)":
+        st.info("🤖 Modalità Black Box: nessuna spiegazione fornita.", icon="⬛")
+
+    if is_experiment_mode:
+        st.divider()
+        st.header("🔬 La Tua Valutazione (per l'Esperimento)")
+        trust_score = st.slider("Quanta fiducia hai nella previsione dell'AI? (1=Nessuna, 5=Massima)", 1, 5, 3)
+        final_decision = st.radio("Qual è la tua decisione finale sulla commestibilità?", ("Commestibile", "Non Commestibile / Velenoso", "Non so decidere"), index=None, horizontal=True)
+        if st.button("Salva e Invia la mia Decisione"):
+            if final_decision and student_id:
+                experiment_data = {"student_id": student_id, "filename": uploaded_file.name, "ai_species": predicted_species, "ai_edibility": commestibilita, "student_decision": final_decision, "student_trust": trust_score, "explanation_mode": explanation_mode}
+                save_experiment_data(experiment_data)
+                st.success("Decisione registrata con successo! Grazie.")
+            else:
+                st.error("Per favore, compila l'ID studente e fai una scelta prima di salvare.")
