@@ -14,3 +14,4 @@ python-resize-image
 gdown
 requests
 lime
+seaborn
