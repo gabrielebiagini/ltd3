@@ -16,4 +16,3 @@ requests
 lime
 seaborn
 serpapi 
-serpapi client
