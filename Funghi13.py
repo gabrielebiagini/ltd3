@@ -230,7 +230,7 @@ if uploaded_file is not None:
     st.header("Risultati dell'Analisi AI")
     col1, col2 = st.columns([1, 2])
     with col1:
-        st.image(image, caption=f"Immagine Caricata: {uploaded_file.name}", use_column_width=True)
+        st.image(image, caption=f"Immagine Caricata: {uploaded_file.name}", use_container_width=True)
     with col2:
         st.subheader(f"Predizione: **{predicted_species}**")
         st.write(f"Nome Italiano: **{info.get('nome_italiano', 'N/A')}**")
@@ -275,7 +275,7 @@ if uploaded_file is not None:
                 if last_conv_layer:
                     gradcam_heatmap = make_gradcam_heatmap(model, preprocessed_array, last_conv_layer)
                     gradcam_superimposed = display_superimposed_heatmap(original_resized_array, gradcam_heatmap)
-                    st.image(gradcam_superimposed, caption="Heatmap Grad-CAM", use_column_width=True)
+                    st.image(gradcam_superimposed, caption="Heatmap Grad-CAM", use_container_width=True)
                     st.markdown(f"**Cosa significa?** Le aree **rosse** indicano le parti dell'immagine che l'AI ha ritenuto più importanti per classificarlo come *{predicted_species}*.")
                 else:
                     st.error("Impossibile generare Grad-CAM: nessun layer convoluzionale trovato.")
@@ -284,7 +284,7 @@ if uploaded_file is not None:
             # ... (il codice per LIME rimane invariato) ...
             with st.spinner("Generazione LIME..."):
                 lime_img = explain_with_lime(model, preprocessed_array)
-                st.image(lime_img, caption="Spiegazione LIME", use_column_width=True)
+                st.image(lime_img, caption="Spiegazione LIME", use_container_width=True)
                 st.markdown(f"**Cosa significa?** LIME evidenzia i **gruppi di pixel** che hanno contribuito maggiormente alla previsione *{predicted_species}*.")
         
         with tab4:
@@ -292,7 +292,7 @@ if uploaded_file is not None:
             with st.spinner("Generazione Occlusion Sensitivity..."):
                 occlusion_map = make_occlusion_sensitivity_map(model, original_resized_array)
                 occlusion_superimposed = display_superimposed_heatmap(original_resized_array, occlusion_map, alpha=0.6)
-                st.image(occlusion_superimposed, caption="Mappa di Occlusion Sensitivity", use_column_width=True)
+                st.image(occlusion_superimposed, caption="Mappa di Occlusion Sensitivity", use_container_width=True)
                 st.markdown("**Cosa significa?** Le aree **rosse** indicano le regioni dell'immagine che, se coperte, causano il maggior calo di fiducia nella predizione.")
 
     elif explanation_mode == "Nessuna (Black Box)":
