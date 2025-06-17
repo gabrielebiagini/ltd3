@@ -297,7 +297,7 @@ if uploaded_file is not None:
         trust_score = st.slider("Quanta fiducia hai nella previsione dell'AI? (1=Nessuna, 5=Massima)", 1, 5, 3)
         final_decision = st.radio("Qual è la tua decisione finale sulla commestibilità?", ("Commestibile", "Non Commestibile / Velenoso", "Non so decidere"), index=None, horizontal=True)
         if st.button("Salva e Invia la mia Decisione"):
-        if final_decision and student_id:
+         if final_decision and student_id:
             experiment_data = {
                 "ID_Studente": student_id,
                 "Nome_File": uploaded_file.name,
@@ -309,9 +309,9 @@ if uploaded_file is not None:
             }
             # CHIAMA LA NUOVA FUNZIONE
             success, error_message = save_data_to_google_sheet(experiment_data)
-            if success:
+             if success:
                 st.success("Decisione registrata con successo sul Google Sheet! Grazie.")
-            else:
+             else:
                 st.error(f"Errore durante il salvataggio su Google Sheets: {error_message}")
         else:
             st.error("Per favore, compila l'ID studente e fai una scelta prima di salvare.")
