@@ -309,7 +309,7 @@ if uploaded_file is not None:
             }
             # CHIAMA LA NUOVA FUNZIONE
             success, error_message = save_data_to_google_sheet(experiment_data)
-             if success:
+         if success:
                 st.success("Decisione registrata con successo sul Google Sheet! Grazie.")
              else:
                 st.error(f"Errore durante il salvataggio su Google Sheets: {error_message}")
