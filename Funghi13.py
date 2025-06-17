@@ -291,27 +291,46 @@ if uploaded_file is not None:
         st.info("🤖 Modalità Black Box: nessuna spiegazione fornita.", icon="⬛")
 
     if is_experiment_mode:
-        # ... (la parte di raccolta dati per l'esperimento rimane invariata) ...
         st.divider()
         st.header("🔬 La Tua Valutazione (per l'Esperimento)")
-        trust_score = st.slider("Quanta fiducia hai nella previsione dell'AI? (1=Nessuna, 5=Massima)", 1, 5, 3)
-        final_decision = st.radio("Qual è la tua decisione finale sulla commestibilità?", ("Commestibile", "Non Commestibile / Velenoso", "Non so decidere"), index=None, horizontal=True)
+        
+        trust_score = st.slider(
+            "Quanta fiducia hai nella previsione dell'AI? (1=Nessuna, 5=Massima)", 
+            1, 5, 3
+        )
+        
+        final_decision = st.radio(
+            "Qual è la tua decisione finale sulla commestibilità?", 
+            ("Commestibile", "Non Commestibile / Velenoso", "Non so decidere"), 
+            index=None, 
+            horizontal=True
+        )
+        
+        # Gestione del click sul pulsante
         if st.button("Salva e Invia la mia Decisione"):
-         if final_decision and student_id:
-            experiment_data = {
-                "ID_Studente": student_id,
-                "Nome_File": uploaded_file.name,
-                "Specie_AI": predicted_species,
-                "Commestibilita_AI": commestibilita,
-                "Decisione_Studente": final_decision,
-                "Fiducia_Studente": trust_score,
-                "Modalita_Spiegazione": explanation_mode
-            }
-            # CHIAMA LA NUOVA FUNZIONE
-            success, error_message = save_data_to_google_sheet(experiment_data)
-         if success:
-                st.success("Decisione registrata con successo sul Google Sheet! Grazie.")
-         else:
-                st.error(f"Errore durante il salvataggio su Google Sheets: {error_message}")
-        else:
-            st.error("Per favore, compila l'ID studente e fai una scelta prima di salvare.")
+            
+            # 1. Controlla se i campi obbligatori sono stati riempiti
+            if final_decision and student_id:
+                
+                # 2. Se sono pieni, prepara i dati
+                experiment_data = {
+                    "ID_Studente": student_id,
+                    "Nome_File": uploaded_file.name,
+                    "Specie_AI": predicted_species,
+                    "Commestibilita_AI": commestibilita,
+                    "Decisione_Studente": final_decision,
+                    "Fiducia_Studente": trust_score,
+                    "Modalita_Spiegazione": explanation_mode
+                }
+                
+                # 3. Prova a salvare e mostra il risultato
+                success, error_message = save_data_to_google_sheet(experiment_data)
+                
+                if success:
+                    st.success("Decisione registrata con successo sul Google Sheet! Grazie.")
+                else:
+                    st.error(f"Errore durante il salvataggio su Google Sheets: {error_message}")
+            
+            # 4. Se i campi non sono pieni, mostra un errore
+            else:
+                st.error("Per favore, compila l'ID studente e fai una scelta prima di salvare.")
