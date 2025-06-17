@@ -17,3 +17,5 @@ lime
 seaborn
 serpapi 
 google-search-results
+gspread
+gspread-dataframe
