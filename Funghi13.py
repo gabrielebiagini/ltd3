@@ -167,7 +167,7 @@ def fetch_online_images(query: str, num_images: int = 4):
 # --- FUNZIONI PER L'ATTIVITÀ ACCADEMICA ---
 # ... (La funzione save_experiment_data rimane invariata) ...
 def save_data_to_google_sheet(data):
-    """Salva i dati dell'esperimento in un Google Sheet."""
+    """Salva i dati dell'esperimento in un Google Sheet in modo robusto."""
     try:
         # Carica le credenziali e il nome del foglio dai secrets
         creds = st.secrets["gcp_service_account"]
@@ -178,18 +178,26 @@ def save_data_to_google_sheet(data):
         spreadsheet = gc.open(sheet_name)
         worksheet = spreadsheet.sheet1 # Accede al primo foglio
         
-        # Converte i dati in un DataFrame di pandas per un facile inserimento
-        df = pd.DataFrame([data])
+        # Converte i dati in una lista di valori
+        values = list(data.values())
         
-        # Trova la prima riga vuota e scrive i dati
-        # Nota: gspread_dataframe non ha una funzione append diretta e pulita.
-        # Un modo semplice è leggere tutto, aggiungere la riga e riscrivere,
-        # ma per un log è più efficiente usare l'API di base.
-        worksheet.append_row(df.values.flatten().tolist())
+        # Aggiunge la riga. Questo metodo restituisce un dizionario con i dettagli dell'aggiornamento
+        response = worksheet.append_row(values, value_input_option='USER_ENTERED')
         
-        return True, None # Successo
+        # CONTROLLO DI SUCCESSO MIGLIORATO
+        # Se la risposta contiene la chiave "updates", l'operazione è andata a buon fine.
+        if response.get("updates"):
+            return True, None # Vero successo
+        else:
+            # Se la risposta non è quella attesa, la segnaliamo come errore
+            return False, f"Risposta inattesa da Google Sheets API: {response}"
+
+    except gspread.exceptions.SpreadsheetNotFound:
+        return False, f"Foglio di calcolo non trovato. Controllare che il nome '{sheet_name}' sia corretto e che il foglio sia stato condiviso con l'email di servizio."
     except Exception as e:
-        return False, str(e) # Fallimento
+        # Questo ora catturerà solo le vere eccezioni (es. problemi di connessione, permessi)
+        return False, str(e)
+
 
 
 # --- INTERFACCIA UTENTE STREAMLIT (invariata) ---
