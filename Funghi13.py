@@ -9,6 +9,9 @@ import io
 from lime import lime_image
 from skimage.segmentation import mark_boundaries
 from serpapi import SerpApiClient # <-- MODIFICATO: Importiamo la classe corretta
+import gspread
+from gspread_dataframe import set_with_dataframe
+import pandas as pd
 
 # --- CONFIGURAZIONE DELLA PAGINA STREAMLIT ---
 st.set_page_config(
@@ -163,12 +166,30 @@ def fetch_online_images(query: str, num_images: int = 4):
 
 # --- FUNZIONI PER L'ATTIVITÀ ACCADEMICA ---
 # ... (La funzione save_experiment_data rimane invariata) ...
-def save_experiment_data(data):
-    file_path = 'experiment_results.csv'
-    header = "ID_Studente,Nome_File,Specie_AI,Commestibilita_AI,Decisione_Studente,Fiducia_Studente (1-5),Modalita_Spiegazione\n"
-    if not os.path.exists(file_path):
-        with open(file_path, 'w') as f: f.write(header)
-    with open(file_path, 'a') as f: f.write(f"{data['student_id']},{data['filename']},{data['ai_species']},{data['ai_edibility']},{data['student_decision']},{data['student_trust']},{data['explanation_mode']}\n")
+def save_data_to_google_sheet(data):
+    """Salva i dati dell'esperimento in un Google Sheet."""
+    try:
+        # Carica le credenziali e il nome del foglio dai secrets
+        creds = st.secrets["gcp_service_account"]
+        sheet_name = st.secrets["gcp_sheet_name"]
+        
+        # Autorizza e apre il foglio di calcolo
+        gc = gspread.service_account_from_dict(creds)
+        spreadsheet = gc.open(sheet_name)
+        worksheet = spreadsheet.sheet1 # Accede al primo foglio
+        
+        # Converte i dati in un DataFrame di pandas per un facile inserimento
+        df = pd.DataFrame([data])
+        
+        # Trova la prima riga vuota e scrive i dati
+        # Nota: gspread_dataframe non ha una funzione append diretta e pulita.
+        # Un modo semplice è leggere tutto, aggiungere la riga e riscrivere,
+        # ma per un log è più efficiente usare l'API di base.
+        worksheet.append_row(df.values.flatten().tolist())
+        
+        return True, None # Successo
+    except Exception as e:
+        return False, str(e) # Fallimento
 
 
 # --- INTERFACCIA UTENTE STREAMLIT (invariata) ---
@@ -276,9 +297,21 @@ if uploaded_file is not None:
         trust_score = st.slider("Quanta fiducia hai nella previsione dell'AI? (1=Nessuna, 5=Massima)", 1, 5, 3)
         final_decision = st.radio("Qual è la tua decisione finale sulla commestibilità?", ("Commestibile", "Non Commestibile / Velenoso", "Non so decidere"), index=None, horizontal=True)
         if st.button("Salva e Invia la mia Decisione"):
-            if final_decision and student_id:
-                experiment_data = {"student_id": student_id, "filename": uploaded_file.name, "ai_species": predicted_species, "ai_edibility": commestibilita, "student_decision": final_decision, "student_trust": trust_score, "explanation_mode": explanation_mode}
-                save_experiment_data(experiment_data)
-                st.success("Decisione registrata con successo! Grazie.")
+        if final_decision and student_id:
+            experiment_data = {
+                "ID_Studente": student_id,
+                "Nome_File": uploaded_file.name,
+                "Specie_AI": predicted_species,
+                "Commestibilita_AI": commestibilita,
+                "Decisione_Studente": final_decision,
+                "Fiducia_Studente": trust_score,
+                "Modalita_Spiegazione": explanation_mode
+            }
+            # CHIAMA LA NUOVA FUNZIONE
+            success, error_message = save_data_to_google_sheet(experiment_data)
+            if success:
+                st.success("Decisione registrata con successo sul Google Sheet! Grazie.")
             else:
-                st.error("Per favore, compila l'ID studente e fai una scelta prima di salvare.")
+                st.error(f"Errore durante il salvataggio su Google Sheets: {error_message}")
+        else:
+            st.error("Per favore, compila l'ID studente e fai una scelta prima di salvare.")
